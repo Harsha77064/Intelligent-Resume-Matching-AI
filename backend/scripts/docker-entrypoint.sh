@@ -4,7 +4,7 @@
 # as root, hand the data folder to that user, then drop root and run the command as it.
 set -e
 DATA_DIR="${DATA_DIR:-/data}"
-APP_UID=10001
+APP_UID=1000
 
 if [ "$(id -u)" = "0" ]; then
     mkdir -p "$DATA_DIR"

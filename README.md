@@ -186,6 +186,22 @@ Open http://localhost:8000/hr/login. Create the first HR account inside the cont
 docker run --rm -it -v matchpoint-data:/data matchpoint python -m app.users create-hr --email you@company.com --name "Your Name"
 ```
 
+### Free demo: Hugging Face Spaces
+Free, with enough memory for the full AI model. **Data is not kept**: the Space resets when it restarts or after about 2 days without visitors. Use it for demos, with demo data reloaded on every start.
+
+1. On huggingface.co: **New Space** → SDK **Docker** → **Blank** → hardware **CPU basic (free)**.
+2. In the Space's **Settings → Variables and secrets**, add:
+   - Variables: `SEED_DEMO=1` and `SEED_DEMO_ACCOUNTS=0` (demo jobs and resumes, but not the demo logins whose passwords are in this public code)
+   - Secrets: `HR_EMAIL`, `HR_PASSWORD` (your HR login, re-created on every start) and `SECRET_KEY` (any long random text)
+3. Create an access token with **write** permission (huggingface.co → Settings → Access Tokens).
+4. Publish from this folder; Git asks for your Hugging Face username and the token:
+   ```powershell
+   .\deploy-huggingface.ps1 -Space your-hf-username/your-space-name
+   ```
+5. Open the app at `https://your-hf-username-your-space-name.hf.space/hr/login`. Use this direct link: inside the huggingface.co page the app can't sign you in, because browsers block login cookies in embedded frames.
+
+Run the script again after each commit to update the Space.
+
 ### Option 1: Railway or Render (from GitHub)
 1. Push this folder to a **private** GitHub repository.
 2. Create a new service from the repo; the platform detects the `Dockerfile`.
@@ -278,6 +294,7 @@ frontend/src/
 | `EMBEDDING_MODEL` | `sentence-transformers/all-MiniLM-L6-v2` | any Sentence Transformers model |
 | `APP_ENV` | `development` | `production` = Secure cookies, API docs hidden, demo data off (set automatically in the Docker image) |
 | `SEED_DEMO` | `1` in development, `0` in production | seed sample data and demo accounts when the DB is empty |
+| `SEED_DEMO_ACCOUNTS` | same as `SEED_DEMO` | `0` = demo data without the demo logins (for public demos) |
 | `COOKIE_SECURE` | `auto` in development, `true` in production | force session cookies to HTTPS-only (`true`/`false`/`auto`) |
 | `ENABLE_DOCS` | on in development, off in production | interactive API docs at `/docs` |
 | `DATA_DIR` | `backend/data` (`/data` in Docker) | database, uploaded resumes, session key |

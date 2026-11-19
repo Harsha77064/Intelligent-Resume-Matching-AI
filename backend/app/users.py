@@ -80,7 +80,7 @@ def main() -> None:
             db.delete(user)
             db.commit()
             print(f"Deleted account {email}.")
-            if settings.SEED_DEMO and email.endswith(("@matchpoint.test", "rahul.kumar@example.com")):
+            if settings.SEED_DEMO_ACCOUNTS and email.endswith(("@matchpoint.test", "rahul.kumar@example.com")):
                 print("Note: demo mode is on, so demo accounts are re-created on the next start. Set SEED_DEMO=0 in backend/.env.")
 
 

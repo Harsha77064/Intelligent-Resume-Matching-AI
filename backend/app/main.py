@@ -54,7 +54,7 @@ def ensure_accounts(db) -> None:
     hr_email, hr_pw = os.getenv("HR_EMAIL"), os.getenv("HR_PASSWORD")
     if hr_email and hr_pw and not db.query(User).filter(User.email == hr_email.lower()).first():
         create_user(db, email=hr_email, name=os.getenv("HR_NAME", "HR Admin"), password=hr_pw, role="hr")
-    if settings.SEED_DEMO:
+    if settings.SEED_DEMO_ACCOUNTS:
         from .seed import DEMO_ACCOUNTS
 
         for acc in DEMO_ACCOUNTS:

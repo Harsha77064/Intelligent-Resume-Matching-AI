@@ -34,3 +34,7 @@ SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
 SMTP_FROM = os.getenv("SMTP_FROM", "").strip() or SMTP_USERNAME
 SMTP_SECURITY = os.getenv("SMTP_SECURITY", "starttls").strip().lower()  # starttls | ssl | none
 EMAIL_CONFIGURED = bool(SMTP_HOST and SMTP_FROM)
+
+# Demo logins (passwords are in the public source code). Defaults to SEED_DEMO; set
+# SEED_DEMO_ACCOUNTS=0 on a public demo to get the demo jobs/resumes without those logins.
+SEED_DEMO_ACCOUNTS = _flag("SEED_DEMO_ACCOUNTS", SEED_DEMO)

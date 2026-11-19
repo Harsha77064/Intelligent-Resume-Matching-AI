@@ -38,15 +38,16 @@ RUN pip install -r requirements.txt \
 
 COPY backend/app ./app
 COPY backend/scripts ./scripts
-COPY backend/sample_resumes ./sample_resumes
 COPY --from=web /web/dist /app/frontend/dist
 
-# run as an unprivileged user; /data holds the database, uploaded resumes and the session key
-RUN useradd --create-home --uid 10001 matchpoint \
+# run as an unprivileged user; /data holds the database, uploaded resumes and the session key.
+# uid 1000 is also the user Hugging Face Spaces run containers as.
+RUN useradd --create-home --uid 1000 matchpoint \
  && mkdir -p /data /app/models \
  && chown -R matchpoint:matchpoint /data /app/models
 # No USER line on purpose: the entrypoint starts as root only to make a root-owned
-# persistent disk at /data writable, then drops to the matchpoint user (uid 10001).
+# persistent disk at /data writable, then drops to the matchpoint user (uid 1000).
+# Hosts that never start containers as root (e.g. Hugging Face) run it as uid 1000 directly.
 # the model is baked into the image: never download at runtime
 ENV HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 
