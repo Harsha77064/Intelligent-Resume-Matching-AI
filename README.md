@@ -193,7 +193,9 @@ docker run --rm -it -v matchpoint-data:/data matchpoint python -m app.users crea
 4. Set variables: `APP_ENV=production`, plus `HR_EMAIL` and `HR_PASSWORD` for the first HR account (remove the password variable after first start).
 5. Deploy, then open `https://<your-app>/hr/login`. `/api/health` is the health-check path.
 
-If the logs say *"cannot write to its data folder /data"*, the platform mounted the disk as root-only: set its "run as root" option, or mount the disk at a writable path and set `DATA_DIR` to it.
+Platforms usually mount the disk owned by root. That's handled: the container starts as root only long enough to give `/data` to its unprivileged `matchpoint` user, then runs the app as that user. If the logs still say *"cannot write to its data folder /data"*, check that the disk's mount path is exactly `/data`.
+
+On a plan with less than 1 GB RAM, add the variable `SEMANTIC_ENGINE=tfidf`. The app then skips loading the AI model and uses keyword (TF-IDF) similarity, which needs about 150 MB.
 
 ### Option 2: Fly.io
 `fly launch` (it detects the Dockerfile), then `fly volumes create matchpoint_data --size 1` and add to `fly.toml`:

@@ -45,7 +45,8 @@ COPY --from=web /web/dist /app/frontend/dist
 RUN useradd --create-home --uid 10001 matchpoint \
  && mkdir -p /data /app/models \
  && chown -R matchpoint:matchpoint /data /app/models
-USER matchpoint
+# No USER line on purpose: the entrypoint starts as root only to make a root-owned
+# persistent disk at /data writable, then drops to the matchpoint user (uid 10001).
 # the model is baked into the image: never download at runtime
 ENV HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 
@@ -56,4 +57,5 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 \
 
 # --proxy-headers + --forwarded-allow-ips: trust the hosting platform's HTTPS proxy so the
 # app knows requests were HTTPS (secure cookies, HSTS). PORT is set by most hosts.
+ENTRYPOINT ["sh", "/app/backend/scripts/docker-entrypoint.sh"]
 CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT} --proxy-headers --forwarded-allow-ips='*'"]
