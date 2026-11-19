@@ -186,21 +186,16 @@ Open http://localhost:8000/hr/login. Create the first HR account inside the cont
 docker run --rm -it -v matchpoint-data:/data matchpoint python -m app.users create-hr --email you@company.com --name "Your Name"
 ```
 
-### Free demo: Hugging Face Spaces
-Free, with enough memory for the full AI model. **Data is not kept**: the Space resets when it restarts or after about 2 days without visitors. Use it for demos, with demo data reloaded on every start.
+### Free demo: Render Free plan
+Costs nothing, but **data is not kept**: a Free service has no disk and sleeps after 15 minutes without visitors, so it resets on every sleep, restart or deploy. Demo data and your HR login are re-created on each start. Free services also can't send email (SMTP ports are blocked), and 512 MB RAM means keyword matching instead of the AI model.
 
-1. On huggingface.co: **New Space** → SDK **Docker** → **Blank** → hardware **CPU basic (free)**.
-2. In the Space's **Settings → Variables and secrets**, add:
-   - Variables: `SEED_DEMO=1` and `SEED_DEMO_ACCOUNTS=0` (demo jobs and resumes, but not the demo logins whose passwords are in this public code)
-   - Secrets: `HR_EMAIL`, `HR_PASSWORD` (your HR login, re-created on every start) and `SECRET_KEY` (any long random text)
-3. Create an access token with **write** permission (huggingface.co → Settings → Access Tokens).
-4. Publish from this folder; Git asks for your Hugging Face username and the token:
-   ```powershell
-   .\deploy-huggingface.ps1 -Space your-hf-username/your-space-name
-   ```
-5. Open the app at `https://your-hf-username-your-space-name.hf.space/hr/login`. Use this direct link: inside the huggingface.co page the app can't sign you in, because browsers block login cookies in embedded frames.
-
-Run the script again after each commit to update the Space.
+1. On render.com: **New + → Web Service** → this GitHub repo → Language **Docker**, instance type **Free**.
+2. Environment variables:
+   - `SEMANTIC_ENGINE=tfidf` (fits in 512 MB)
+   - `SEED_DEMO=1` and `SEED_DEMO_ACCOUNTS=0` (demo jobs and resumes, but not the demo logins whose passwords are in this public code)
+   - `HR_EMAIL`, `HR_PASSWORD` (your HR login, re-created on every start) and `SECRET_KEY` (any long random text)
+3. Health check path `/api/health`. Don't add a disk (Free services can't have one).
+4. Open `https://<your-service>.onrender.com/hr/login` once the logs show `Application startup complete`. The first visit after a sleep takes about a minute.
 
 ### Option 1: Railway or Render (from GitHub)
 1. Push this folder to a **private** GitHub repository.
