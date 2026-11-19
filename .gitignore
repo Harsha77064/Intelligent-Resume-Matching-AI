@@ -1,0 +1,18 @@
+# Python
+backend/.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+# Runtime data (SQLite DB + uploaded resumes)
+backend/data/
+# Frontend
+frontend/node_modules/
+frontend/dist/
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+
+# Local settings / secrets
+backend/.env
+backend/data-backup*/

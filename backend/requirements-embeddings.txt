@@ -1,0 +1,5 @@
+# Optional: semantic matching with Sentence Transformers (all-MiniLM-L6-v2).
+# Without it the app falls back to TF-IDF similarity automatically.
+# Needs ~700 MB RAM at runtime. For a CPU-only server, install torch from the CPU index first:
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+sentence-transformers>=3.0

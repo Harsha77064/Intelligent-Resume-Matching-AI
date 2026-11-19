@@ -1,0 +1,28 @@
+# Run MatchPoint on any server with Docker (e.g. a VPS):
+#   docker compose up -d --build
+# Data (database, resumes, session key) is kept in the "matchpoint-data" volume.
+# Put an HTTPS reverse proxy (Caddy, Nginx, Cloudflare Tunnel) in front for a public site.
+services:
+  matchpoint:
+    build: .
+    image: matchpoint
+    restart: unless-stopped
+    ports:
+      # Only reachable from this machine. The app trusts X-Forwarded-* headers (client IP for
+      # rate limits, HTTPS for secure cookies), so the public must come through your HTTPS
+      # reverse proxy (Caddy/Nginx on this server), never straight to port 8000.
+      - "127.0.0.1:8000:8000"
+    environment:
+      APP_ENV: production
+      # Optional: create the first HR account on first start, then remove these two lines.
+      # HR_EMAIL: you@company.com
+      # HR_PASSWORD: change-me-to-a-strong-password
+      # Email for "Forgot password" codes (see README):
+      # SMTP_HOST: smtp.gmail.com
+      # SMTP_USERNAME: yourname@gmail.com
+      # SMTP_PASSWORD: your-app-password
+    volumes:
+      - matchpoint-data:/data
+
+volumes:
+  matchpoint-data:
