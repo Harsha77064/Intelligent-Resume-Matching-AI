@@ -1,0 +1,11 @@
+# Normalise text files; keep binaries byte-for-byte on every OS
+* text=auto
+*.pdf binary
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff2 binary
+# Linux container files must keep LF line endings
+Dockerfile text eol=lf
+*.sh text eol=lf
+*.yml text eol=lf
