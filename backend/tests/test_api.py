@@ -271,10 +271,12 @@ def test_candidate_portal_flow(client):
     mine = next(a for a in hr_view if a["candidate_email"] == "portal.user@example.com")
     assert mine["status"] == "submitted"
 
-    # HR screening against another job does not show up in the candidate's results
+    # the resume is scored for every open job, but only the job they applied to counts as applied
     client.post(f"/api/match/{other['id']}")
     results = me.get("/api/portal/results").json()
-    assert [r["job_title"] for r in results] == ["Portal Job"]
+    assert {"Portal Job", "Not Applied"} <= {r["job_title"] for r in results}
+    assert [r["job_title"] for r in results if r["applied"]] == ["Portal Job"]
+    assert results[0]["job_title"] == "Portal Job" and results[0]["auto_applied"]
 
     # replacing the resume re-scores the application
     me.post("/api/portal/resume", files={"file": ("cv2.pdf", WEAK, "application/pdf")})
@@ -490,6 +492,119 @@ def test_consent_is_per_job_not_carried_to_other_jobs(client):
     statuses = {x["job_id"]: x["status"] for x in client.get("/api/applications").json()
                 if x["candidate_email"] == "per.job@example.com"}
     assert statuses[a] == "submitted"  # re-scoring after a new resume keeps A's own consent
+
+
+AUTO_PDF = make_pdf(
+    ["Auto Applier", "auto.applier@example.com", "Skills", "Python, FastAPI, MySQL, REST API, Git, Docker, Redis",
+     "Experience", "Engineer, Foo Corp", "Jan 2019 - Dec 2023", "Education", "B.Tech in Computer Science, 2018"])
+
+
+def test_upload_scores_every_open_job(client):
+    fit = client.post("/api/jobs", json={**JOB, "title": "Score All Fit"}).json()["id"]
+    misfit = client.post("/api/jobs", json={**JOB, "title": "Score All Misfit", "required_skills": ["Excel", "Tableau"],
+                                            "preferred_skills": [], "description": "Spreadsheets"}).json()["id"]
+    closed = client.post("/api/jobs", json={**JOB, "title": "Score All Closed", "status": "closed"}).json()["id"]
+    me = candidate_client("score.all@example.com")
+    assert me.post("/api/portal/resume", files={"file": ("cv.pdf", AUTO_PDF, "application/pdf")}).status_code == 200
+
+    jobs = {j["id"]: j for j in me.get("/api/portal/jobs").json()}
+    assert jobs[fit]["score"] >= 80 and jobs[misfit]["score"] < 60
+    assert not jobs[fit]["applied"] and not jobs[fit]["auto_applied"]  # Auto Apply is off: scored, not applied
+    assert closed not in jobs
+    results = {r["job_id"]: r for r in me.get("/api/portal/results").json()}
+    assert {fit, misfit} <= set(results) and closed not in results
+    # HR sees the screening result but it was not submitted
+    hr = [a for a in client.get("/api/applications", params={"job_id": fit}).json() if a["candidate_email"] == "score.all@example.com"][0]
+    assert hr["status"] == "recruiter_review" and not hr["candidate_applied"]
+
+
+def test_auto_apply_applies_to_high_matches_only(client):
+    high = client.post("/api/jobs", json={**JOB, "title": "Auto High"}).json()["id"]
+    low = client.post("/api/jobs", json={**JOB, "title": "Auto Low", "required_skills": ["Excel", "Tableau"],
+                                         "preferred_skills": [], "description": "Spreadsheets"}).json()["id"]
+    me = candidate_client("auto.applier@example.com")
+
+    # needs a resume and both consents
+    assert me.post("/api/portal/auto-apply", json={"enabled": True, "details_reviewed": True, "data_sharing_consent": True}).status_code == 400
+    me.post("/api/portal/resume", files={"file": ("cv.pdf", AUTO_PDF, "application/pdf")})
+    assert me.post("/api/portal/auto-apply", json={"enabled": True, "details_reviewed": True}).status_code == 400
+
+    r = me.post("/api/portal/auto-apply", json={"enabled": True, "details_reviewed": True, "data_sharing_consent": True})
+    assert r.status_code == 200 and r.json()["auto_apply_all"] and "Auto High" in r.json()["auto_applied_jobs"]
+    assert "Auto Low" not in r.json()["auto_applied_jobs"]
+    status = {a["job_id"]: a for a in client.get("/api/applications").json() if a["candidate_email"] == "auto.applier@example.com"}
+    assert status[high]["status"] == "submitted" and status[high]["candidate_applied"]
+    assert status[low]["status"] == "standard_review" and not status[low]["candidate_applied"]
+    jobs = {j["id"]: j for j in me.get("/api/portal/jobs").json()}
+    assert jobs[high]["auto_applied"] and not jobs[low]["applied"]
+
+    # a job HR posts later is scored and applied to straight away
+    later = client.post("/api/jobs", json={**JOB, "title": "Auto Later"}).json()["id"]
+    later_app = [a for a in client.get("/api/applications", params={"job_id": later}).json() if a["candidate_email"] == "auto.applier@example.com"][0]
+    assert later_app["status"] == "submitted"
+
+    # an HR decision is never overridden by a re-upload
+    client.patch(f"/api/applications/{status[high]['id']}", json={"status": "rejected"})
+    me.post("/api/portal/resume", files={"file": ("cv2.pdf", AUTO_PDF + b" ", "application/pdf")})
+    assert client.get(f"/api/applications/{status[high]['id']}").json()["status"] == "rejected"
+
+    # turning it off stops new auto-applications; submitted ones stay submitted
+    assert me.post("/api/portal/auto-apply", json={"enabled": False}).json()["auto_apply_all"] is False
+    off = client.post("/api/jobs", json={**JOB, "title": "Auto Off"}).json()["id"]
+    assert not [a for a in client.get("/api/applications", params={"job_id": off}).json() if a["candidate_email"] == "auto.applier@example.com"]
+    assert client.get(f"/api/applications/{later_app['id']}").json()["status"] == "submitted"
+
+
+def test_hr_auto_shortlist(client):
+    def apps_for(job_id):
+        return {a["candidate_email"]: a for a in client.get("/api/applications", params={"job_id": job_id}).json()}
+
+    job = client.post("/api/jobs", json={**JOB, "title": "Shortlist Job"}).json()["id"]
+    strong = make_pdf(["Strong Shortlist", "strong.shortlist@example.com", "Skills",
+                       "Python, FastAPI, MySQL, REST API, Git, Docker, Redis", "Experience", "Engineer, Foo Corp",
+                       "Jan 2019 - Dec 2023", "Education", "B.Tech in Computer Science, 2018"])
+    weak = make_pdf(["Weak Shortlist", "weak.shortlist@example.com", "Skills", "Excel", "Education", "B.Com, 2022"])
+    decided = make_pdf(["Decided Already", "decided.already@example.com", "Skills",
+                        "Python, FastAPI, MySQL, REST API, Git, Docker, Redis", "Experience", "Engineer, Bar Corp",
+                        "Jan 2018 - Dec 2023", "Education", "B.Tech in Computer Science, 2017"])
+    for pdf, name in ((strong, "s.pdf"), (weak, "w.pdf"), (decided, "d.pdf")):
+        assert upload(client, pdf, name, job_id=str(job)).status_code == 200
+    before = apps_for(job)
+    assert before["strong.shortlist@example.com"]["status"] == "recruiter_review"
+    rejected_id = before["decided.already@example.com"]["id"]
+    client.patch(f"/api/applications/{rejected_id}", json={"status": "rejected"})
+
+    assert client.get("/api/settings/auto-shortlist").json() == {"enabled": False, "threshold": 80}
+    assert TestClient(app).put("/api/settings/auto-shortlist", json={"enabled": True}).status_code == 401  # HR only
+    try:
+        r = client.put("/api/settings/auto-shortlist", json={"enabled": True}).json()
+        assert r["enabled"] and r["changed"] >= 1
+        now = apps_for(job)
+        assert now["strong.shortlist@example.com"]["status"] == "shortlisted"
+        assert now["strong.shortlist@example.com"]["routing_reason"].startswith("Auto-shortlisted")
+        assert now["weak.shortlist@example.com"]["status"] == "standard_review"  # low score: untouched
+        assert now["decided.already@example.com"]["status"] == "rejected"  # HR decision is never overridden
+
+        # new high matches are shortlisted as they arrive, from HR uploads and from the candidate portal
+        me = candidate_client("portal.shortlist@example.com")
+        me.post("/api/portal/resume", files={"file": ("cv.pdf", AUTO_PDF.replace(b"Auto Applier", b"Portal Short"), "application/pdf")})
+        me.post(f"/api/portal/apply/{job}", json=CONSENT)
+        mine = apps_for(job)["portal.shortlist@example.com"]
+        assert mine["status"] == "shortlisted" and mine["candidate_applied"] and mine["submitted_at"]
+        assert me.get("/api/portal/jobs").json() and [j for j in me.get("/api/portal/jobs").json() if j["id"] == job][0]["auto_applied"]
+
+        # turning it off keeps what it shortlisted (now as a recruiter decision)
+        off = client.put("/api/settings/auto-shortlist", json={"enabled": False}).json()
+        assert not off["enabled"] and off["changed"] >= 2
+        kept = apps_for(job)["strong.shortlist@example.com"]
+        assert kept["status"] == "shortlisted" and kept["status_locked"]
+        late = upload(client, make_pdf(["Late Strong", "late.strong@example.com", "Skills",
+                                        "Python, FastAPI, MySQL, REST API, Git, Docker, Redis", "Experience",
+                                        "Engineer, Baz", "Jan 2019 - Dec 2023", "Education", "B.Tech in CS, 2018"]),
+                      "late.pdf", job_id=str(job))
+        assert late.status_code == 200 and apps_for(job)["late.strong@example.com"]["status"] == "recruiter_review"
+    finally:
+        client.put("/api/settings/auto-shortlist", json={"enabled": False})
 
 
 def test_portal_upload_links_to_hr_uploaded_profile(client):

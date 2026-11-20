@@ -8,7 +8,7 @@ import { Avatar, Chips, Empty, ErrorBox, Loading, PageHeader, ScoreBar, useAsync
 export default function Candidates() {
   const [search, setSearch] = useState('')
   const q = useDeferredValue(search)
-  const { data, loading, error, reload } = useAsync(() => api.candidates(q || undefined), [q])
+  const { data, loading, error, reload } = useAsync(() => api.candidates(q || undefined), [q], { live: true })
   const [uploadOpen, setUploadOpen] = useState(false)
   const nav = useNavigate()
 

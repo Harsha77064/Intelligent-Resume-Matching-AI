@@ -52,6 +52,7 @@ export const portal = {
     return req('/portal/resume', { method: 'POST', form })
   },
   apply: (jobId, consent) => req(`/portal/apply/${jobId}`, { method: 'POST', body: consent }),
+  setAutoApply: (body) => req('/portal/auto-apply', { method: 'POST', body }),
   results: () => req('/portal/results'),
   deleteAccount: (password) => req('/portal/delete-account', { method: 'POST', body: { password } }),
 }
@@ -61,6 +62,8 @@ export const api = {
   skills: () => req('/skills'),
   stats: () => req('/stats'),
   reports: () => req('/reports'),
+  autoShortlist: () => req('/settings/auto-shortlist'),
+  setAutoShortlist: (enabled) => req('/settings/auto-shortlist', { method: 'PUT', body: { enabled } }),
 
   jobs: (status) => req(`/jobs${qs({ status })}`),
   job: (id) => req(`/jobs/${id}`),

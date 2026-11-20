@@ -1,17 +1,75 @@
 import { useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { Inbox } from 'lucide-react'
+import { Inbox, Star } from 'lucide-react'
 import { api } from '../api'
 import { DecisionButtons } from '../components/InsightPanel'
-import { Avatar, Empty, ErrorBox, Loading, PageHeader, STATUS, ScoreBar, StatusBadge, useAsync } from '../components/ui'
+import { Avatar, Empty, ErrorBox, Loading, PageHeader, STATUS, ScoreBar, Spinner, StatusBadge, Toggle, useAsync, useToast } from '../components/ui'
 
 const TABS = ['', 'submitted', 'pending_consent', 'recruiter_review', 'standard_review', 'shortlisted', 'rejected']
+
+/** HR switch: shortlist every application scoring 80%+ for its job, without HR intervention. */
+function AutoShortlist({ onChanged }) {
+  const { data, setData } = useAsync(() => api.autoShortlist(), [])
+  const [confirming, setConfirming] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const toast = useToast()
+  const on = !!data?.enabled
+  const threshold = data?.threshold ?? 80
+
+  const save = async (enabled) => {
+    setBusy(true)
+    try {
+      const r = await api.setAutoShortlist(enabled)
+      setData(r)
+      setConfirming(false)
+      toast(enabled
+        ? `Auto Shortlist on. ${r.changed} application${r.changed === 1 ? '' : 's'} scoring ${threshold}%+ shortlisted.`
+        : 'Auto Shortlist off. Applications it already shortlisted stay shortlisted.')
+      onChanged()
+    } catch (e) {
+      toast(e.message, 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className={`card mb-4 p-4 ${on ? 'ring-1 ring-brand-200' : ''}`}>
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex min-w-0 flex-1 items-start gap-3">
+          <div className={`rounded-full p-2.5 ${on ? 'bg-brand-600 text-white' : 'bg-brand-50 text-brand-600'}`}><Star size={18} /></div>
+          <div className="min-w-0">
+            <div className="font-bold text-slate-900">Auto Shortlist {on && <span className="ml-1 rounded-full bg-brand-50 px-2 py-0.5 text-xs font-semibold text-brand-700">On</span>}</div>
+            <p className="text-sm text-slate-500">
+              Automatically shortlist every application scoring <b>{threshold}% or more</b> for its job, including new ones as they arrive.
+              Applications you have already shortlisted or rejected are never changed.
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          {busy && <Spinner size={16} />}
+          <Toggle checked={on || confirming} disabled={busy || !data}
+            onChange={(v) => (v ? setConfirming(true) : on ? save(false) : setConfirming(false))} label={on ? 'On' : 'Off'} />
+        </div>
+      </div>
+      {confirming && !on && (
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-brand-50/70 px-4 py-3 text-sm text-slate-700">
+          <span>All open applications scoring {threshold}%+ that you haven't decided on will be shortlisted now. Continue?</span>
+          <span className="flex gap-2">
+            <button className="btn-ghost py-1.5" onClick={() => setConfirming(false)}>Cancel</button>
+            <button className="btn-primary py-1.5" disabled={busy} onClick={() => save(true)}>Turn on Auto Shortlist</button>
+          </span>
+        </div>
+      )}
+    </div>
+  )
+}
 
 export default function Applications() {
   const [params, setParams] = useSearchParams()
   const status = params.get('status') || ''
   const [jobId, setJobId] = useState('')
-  const { data: all, loading, error, reload, setData } = useAsync(() => api.applications({ job_id: jobId || undefined }), [jobId])
+  const { data: all, loading, error, reload, setData } = useAsync(() => api.applications({ job_id: jobId || undefined }), [jobId], { live: true })
   const { data: jobs } = useAsync(() => api.jobs(), [])
 
   const counts = useMemo(() => {
@@ -29,6 +87,8 @@ export default function Applications() {
           {jobs?.map((j) => <option key={j.id} value={j.id}>{j.title}</option>)}
         </select>
       </PageHeader>
+
+      <AutoShortlist onChanged={reload} />
 
       <div className="mb-4 flex gap-1 overflow-x-auto rounded-xl bg-white p-1 shadow-sm ring-1 ring-slate-100">
         {TABS.map((t) => (

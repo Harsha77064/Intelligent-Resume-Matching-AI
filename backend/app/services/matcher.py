@@ -19,7 +19,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 
-from ..models import Application, Candidate, Job
+from ..models import Application, Candidate, Job, Setting
 from ..models import utcnow
 from .parser import LEVEL_NAMES, education_level
 from .semantic import similarity_batch
@@ -164,14 +164,31 @@ def can_submit(app: Application) -> bool:
     return bool(app.candidate_applied and app.auto_apply and app.details_reviewed and app.data_sharing_consent)
 
 
+# HR "Auto Shortlist": while on, every application scoring 80%+ for its job is shortlisted
+# without HR intervention. Mirrored from the settings table at startup and when HR changes it.
+AUTO_SHORTLIST = {"on": False}
+
+
 def route(app: Application) -> None:
+    """Apply the routing rules, then HR Auto Shortlist. Recruiter decisions (locked) are never changed."""
+    if app.status_locked:
+        return
+    _route_by_score_and_consent(app)
+    job = app.job
+    if AUTO_SHORTLIST["on"] and app.score >= HIGH_THRESHOLD and (job is None or job.status == "active"):
+        app.status = "shortlisted"
+        app.routing_reason = (
+            f"Auto-shortlisted: high match ({int(app.score + 0.5)}%) for this job and HR Auto Shortlist is on. "
+            + app.routing_reason
+        )
+
+
+def _route_by_score_and_consent(app: Application) -> None:
     """Apply the auto-apply / review routing rules to an application.
 
     Consent is per application: a candidate who agreed to Auto Apply for one job is never
     auto-submitted to another job that HR screened them for.
     """
-    if app.status_locked:
-        return
     s = app.score
     if s >= HIGH_THRESHOLD:
         if not app.candidate_applied:
@@ -252,3 +269,65 @@ def run_matching(db, job: Job, candidates: list[Candidate]) -> list[Application]
         out.append(app)
     db.commit()
     return out
+
+
+# ---------------------------------------------------------------- Auto Apply (candidate opt-in for all jobs)
+def is_auto_applied(app: Application) -> bool:
+    return bool(app.candidate_applied and app.auto_apply and app.submitted_at)
+
+
+def auto_apply_if_high(app: Application) -> bool:
+    """Apply on the candidate's behalf when they turned on Auto Apply for all jobs (with consent
+    given in "My Resume") and this open job scores 80%+. HR-locked decisions are never changed.
+    Returns True when the application was newly submitted."""
+    cand, job = app.candidate, app.job
+    if not cand.auto_apply_all or job.status != "active" or app.status_locked:
+        return False
+    if app.score < HIGH_THRESHOLD or is_auto_applied(app):
+        return False
+    app.candidate_applied = True
+    app.details_reviewed = True
+    app.data_sharing_consent = True
+    app.auto_apply = True
+    route(app)
+    return is_auto_applied(app)  # submitted (and possibly auto-shortlisted too)
+
+
+def auto_apply_candidates_to_job(db, job: Job) -> list[Application]:
+    """Score every Auto Apply candidate against an open job and apply where they score 80%+."""
+    if job.status != "active":
+        return []
+    cands = db.query(Candidate).filter(Candidate.auto_apply_all.is_(True), Candidate.resume_text != "").all()
+    newly = [a for a in run_matching(db, job, cands) if auto_apply_if_high(a)]
+    db.commit()
+    return newly
+
+
+# ---------------------------------------------------------------- HR Auto Shortlist setting
+def load_settings(db) -> None:
+    row = db.get(Setting, "auto_shortlist")
+    AUTO_SHORTLIST["on"] = bool(row and row.value == "1")
+
+
+def set_auto_shortlist(db, on: bool) -> int:
+    """Turn HR Auto Shortlist on or off and return how many applications it affected.
+
+    On: every open application scoring 80%+ that HR has not decided on is shortlisted now.
+    Off: applications it already shortlisted stay shortlisted (kept as a recruiter decision).
+    """
+    row = db.get(Setting, "auto_shortlist") or Setting(key="auto_shortlist")
+    row.value = "1" if on else "0"
+    db.add(row)
+    AUTO_SHORTLIST["on"] = on
+    changed = 0
+    if on:
+        for a in db.query(Application).filter(Application.status_locked.is_(False), Application.score >= HIGH_THRESHOLD):
+            before = a.status
+            route(a)
+            changed += a.status == "shortlisted" and before != "shortlisted"
+    else:
+        for a in db.query(Application).filter(Application.status == "shortlisted", Application.status_locked.is_(False)):
+            a.status_locked = True
+            changed += 1
+    db.commit()
+    return changed

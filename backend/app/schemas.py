@@ -145,6 +145,10 @@ class ApplicationUpdate(BaseModel):
     reset_to_auto: bool = False  # clear a recruiter decision and re-apply routing rules
 
 
+class AutoShortlistIn(BaseModel):
+    enabled: bool
+
+
 class MatchRunOut(BaseModel):
     job_id: int
     processed: int

@@ -23,7 +23,7 @@ function Metric({ icon: Icon, label, value }) {
 }
 
 export default function Reports() {
-  const { data: r, loading, error, reload } = useAsync(() => api.reports(), [])
+  const { data: r, loading, error, reload } = useAsync(() => api.reports(), [], { live: true })
   if (loading && !r) return <Loading />
   if (error) return <ErrorBox error={error} onRetry={reload} />
   const p = r.processing

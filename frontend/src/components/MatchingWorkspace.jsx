@@ -4,7 +4,7 @@ import { Filter, Play, Search } from 'lucide-react'
 import { api } from '../api'
 import InsightPanel from './InsightPanel'
 import MatchTable from './MatchTable'
-import { Empty, ErrorBox, Loading, Spinner, useToast } from './ui'
+import { Empty, ErrorBox, Loading, Spinner, useLiveRefresh, useToast } from './ui'
 
 /** Job selector + results table + candidate insight panel. Shared by Dashboard and Resume Matching. */
 export default function MatchingWorkspace({ showRun = false, limit, refreshKey = 0, onRan }) {
@@ -45,6 +45,15 @@ export default function MatchingWorkspace({ showRun = false, limit, refreshKey =
       (!q || a.candidate_name.toLowerCase().includes(q) || (a.candidate_email || '').toLowerCase().includes(q) ||
         a.matched_skills.some((s) => s.toLowerCase().includes(q)) || a.missing_skills.some((s) => s.toLowerCase().includes(q))))
   }, [rows, search, band])
+
+  // keep the table current while candidates apply from the portal (quietly: no spinner, selection kept)
+  useLiveRefresh(() => {
+    if (!jobId || running) return
+    api.matchResults(jobId).then((r) => {
+      setRows(r)
+      setSelected((s) => r.find((x) => x.id === s?.id) || r[0] || null)
+    }).catch(() => { /* keep showing the last good results */ })
+  })
 
   const shown = limit ? filtered.slice(0, limit) : filtered
 

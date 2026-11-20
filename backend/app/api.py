@@ -17,7 +17,8 @@ from .auth import require_hr
 from .database import UPLOAD_DIR, get_db
 from .models import Application, Candidate, Job
 from .services import semantic
-from .services.matcher import HIGH_THRESHOLD, MEDIUM_THRESHOLD, can_submit, route, run_matching
+from .services.matcher import (AUTO_SHORTLIST, HIGH_THRESHOLD, MEDIUM_THRESHOLD, auto_apply_candidates_to_job,
+                               can_submit, route, run_matching, set_auto_shortlist)
 from .services.parser import ResumeParseError, parse_resume
 from .services.skills import all_skills
 
@@ -166,7 +167,8 @@ def create_job(body: schemas.JobIn, db: Session = Depends(get_db)):
     job = Job(**body.model_dump())
     db.add(job)
     db.commit()
-    return _job_out(job, {})
+    auto_apply_candidates_to_job(db, job)  # candidates who turned on Auto Apply for all jobs
+    return _job_out(job, _job_aggs(db))
 
 
 @router.get("/jobs/{job_id}", response_model=schemas.JobOut)
@@ -185,6 +187,7 @@ def update_job(job_id: int, body: schemas.JobIn, db: Session = Depends(get_db)):
     if criteria_before != criteria_after and job.applications:
         # keep existing results consistent with the edited requirements
         run_matching(db, job, [a.candidate for a in job.applications])
+    auto_apply_candidates_to_job(db, job)
     return _job_out(job, _job_aggs(db))
 
 
@@ -193,6 +196,7 @@ def set_job_status(job_id: int, status: schemas.JobStatus = Query(...), db: Sess
     job = _get(db, Job, job_id)
     job.status = status
     db.commit()
+    auto_apply_candidates_to_job(db, job)  # no-op unless the job is (re)opened
     return _job_out(job, _job_aggs(db))
 
 
@@ -210,7 +214,8 @@ def _cand_query(db: Session):
 @router.get("/candidates", response_model=list[schemas.CandidateOut])
 def list_candidates(search: str | None = None, db: Session = Depends(get_db)):
     q = _cand_query(db)
-    rows = q.order_by(Candidate.created_at.desc()).all()
+    # most recent activity first, so a resume a candidate just uploaded or replaced is at the top
+    rows = q.order_by(Candidate.updated_at.desc(), Candidate.id.desc()).all()
     if search:
         s = search.lower().strip()
         rows = [
@@ -408,6 +413,18 @@ def update_application(app_id: int, body: schemas.ApplicationUpdate, db: Session
         )
     db.commit()
     return get_application(app_id, db)
+
+
+@router.get("/settings/auto-shortlist")
+def get_auto_shortlist():
+    return {"enabled": AUTO_SHORTLIST["on"], "threshold": HIGH_THRESHOLD}
+
+
+@router.put("/settings/auto-shortlist")
+def put_auto_shortlist(body: schemas.AutoShortlistIn, db: Session = Depends(get_db)):
+    """Shortlist every application scoring 80%+ automatically, without HR intervention."""
+    changed = set_auto_shortlist(db, body.enabled)
+    return {"enabled": AUTO_SHORTLIST["on"], "threshold": HIGH_THRESHOLD, "changed": changed}
 
 
 # ================================================================== reports

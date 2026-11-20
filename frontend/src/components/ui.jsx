@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { CircleCheck, CircleX, Eye, EyeOff, Info, LoaderCircle, X } from 'lucide-react'
 
 export const STATUS = {
@@ -170,8 +170,34 @@ export function ToastProvider({ children }) {
   )
 }
 
+// ---------------------------------------------------------------- live refresh
+export const LIVE_REFRESH_MS = 15000
+
+/**
+ * Calls `onRefresh` when the tab regains focus and every `ms` while the tab is visible, so
+ * HR screens pick up resumes and applications that candidates submit from the portal
+ * without a manual page reload.
+ */
+export function useLiveRefresh(onRefresh, ms = LIVE_REFRESH_MS, enabled = true) {
+  const cb = useRef(onRefresh)
+  useEffect(() => { cb.current = onRefresh })
+  useEffect(() => {
+    if (!enabled) return undefined
+    const tick = () => { if (document.visibilityState === 'visible') cb.current() }
+    const id = setInterval(tick, ms)
+    window.addEventListener('focus', tick)
+    document.addEventListener('visibilitychange', tick)
+    return () => {
+      clearInterval(id)
+      window.removeEventListener('focus', tick)
+      document.removeEventListener('visibilitychange', tick)
+    }
+  }, [ms, enabled])
+}
+
 // ---------------------------------------------------------------- data hook
-export function useAsync(fn, deps = []) {
+/** Loads `fn()` whenever `deps` change. With `{ live: true }` it also refreshes quietly in the background. */
+export function useAsync(fn, deps = [], { live = false } = {}) {
   const [state, setState] = useState({ data: null, loading: true, error: null })
   const run = useCallback(async () => {
     setState((s) => ({ ...s, loading: true, error: null }))
@@ -184,7 +210,16 @@ export function useAsync(fn, deps = []) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps)
+  // background refresh: no spinner, and a failed refresh keeps the data already on screen
+  const refresh = useCallback(async () => {
+    try {
+      const data = await fn()
+      setState((s) => (s.loading ? s : { data, loading: false, error: null }))
+    } catch { /* keep showing the last good data */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps)
   useEffect(() => { run() }, [run])
+  useLiveRefresh(refresh, LIVE_REFRESH_MS, live)
   return { ...state, reload: run, setData: (d) => setState((s) => ({ ...s, data: typeof d === 'function' ? d(s.data) : d })) }
 }
 

@@ -67,7 +67,7 @@ function Distribution({ dist }) {
 
 export default function Dashboard() {
   const [refresh, setRefresh] = useState(0)
-  const { data: s, error, reload } = useAsync(() => api.stats(), [refresh])
+  const { data: s, error, reload } = useAsync(() => api.stats(), [refresh], { live: true })
   const [jobOpen, setJobOpen] = useState(false)
   const [uploadOpen, setUploadOpen] = useState(false)
   const bump = () => setRefresh((r) => r + 1)

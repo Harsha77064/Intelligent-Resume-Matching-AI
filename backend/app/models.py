@@ -51,6 +51,8 @@ class Candidate(Base):
     auto_apply: Mapped[bool] = mapped_column(Boolean, default=False)
     details_reviewed: Mapped[bool] = mapped_column(Boolean, default=False)
     data_sharing_consent: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Set only by the candidate from "My Resume": apply automatically to every open job they score 80%+ on
+    auto_apply_all: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
@@ -121,3 +123,12 @@ class PasswordReset(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class Setting(Base):
+    """Small key/value store for app-wide HR settings (e.g. auto_shortlist = "1")."""
+
+    __tablename__ = "settings"
+
+    key: Mapped[str] = mapped_column(String(50), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, default="")

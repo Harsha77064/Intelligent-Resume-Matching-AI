@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { Link, NavLink, Route, Routes, useNavigate } from 'react-router-dom'
-import { Briefcase, CircleCheck, FileText, GraduationCap, MapPin, Sparkles, Trophy, Upload } from 'lucide-react'
+import { Briefcase, CircleCheck, FileText, GraduationCap, MapPin, Sparkles, Trophy, Upload, Zap } from 'lucide-react'
 import { portal } from '../../api'
 import UserMenu from '../../components/UserMenu'
 import { BrandMark } from '../Login'
@@ -26,6 +26,12 @@ export function ScoreRing({ score, size = 96 }) {
   )
 }
 
+export function AppliedBadge({ applied, autoApplied }) {
+  if (autoApplied) return <span className="flex shrink-0 items-center gap-1 rounded-full bg-brand-50 px-2.5 py-0.5 text-xs font-semibold text-brand-700"><Zap size={12} />Auto-applied</span>
+  if (applied) return <span className="flex shrink-0 items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700"><CircleCheck size={12} />Applied</span>
+  return null
+}
+
 function ResultCard({ r }) {
   return (
     <div className="card p-5 sm:p-6">
@@ -33,7 +39,11 @@ function ResultCard({ r }) {
         <ScoreRing score={r.score} />
         <div className="min-w-0 flex-1">
           <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Resume score for</div>
-          <h3 className="text-lg font-bold text-slate-900">{r.job_title}</h3>
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-lg font-bold text-slate-900">{r.job_title}</h3>
+            <AppliedBadge applied={r.applied} autoApplied={r.auto_applied} />
+            {r.applied === false && <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-500">Not applied</span>}
+          </div>
           {r.company && <div className="text-sm text-slate-500">{r.company}</div>}
           <div className="mt-1 text-xs text-slate-400">Scored {new Date(r.applied_at).toLocaleDateString()}</div>
         </div>
@@ -67,7 +77,8 @@ function ResumeDrop({ onUploaded, compact = false }) {
     setBusy(true)
     try {
       const profile = await portal.uploadResume(file)
-      toast('Resume uploaded and analysed.')
+      const auto = profile.auto_applied_jobs || []
+      toast(auto.length ? `Resume scored for all open jobs. Auto-applied to ${auto.length}: ${auto.join(', ')}.` : 'Resume uploaded and scored for all open jobs.')
       onUploaded?.(profile)
     } catch (e) {
       toast(e.message, 'error')
@@ -167,7 +178,7 @@ function Jobs() {
   const [applying, setApplying] = useState(null)
   return (
     <>
-      <PortalHeader title="Open jobs" subtitle="Apply with your resume and instantly see how well you match." />
+      <PortalHeader title="Open jobs" subtitle="Your resume is scored for every open job. Apply to any of them, or turn on Auto Apply in My Resume." />
       <ErrorBox error={error} onRetry={reload} />
       {loading && !jobs ? <Loading /> : !jobs?.length ? (
         <div className="card"><Empty icon={Briefcase} title="No open jobs right now">Check back soon.</Empty></div>
@@ -177,7 +188,7 @@ function Jobs() {
             <div key={j.id} className="card flex flex-col p-5">
               <div className="mb-1 flex items-start justify-between gap-3">
                 <h3 className="text-lg font-bold text-slate-900">{j.title}</h3>
-                {j.applied && <span className="flex shrink-0 items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700"><CircleCheck size={12} />Applied</span>}
+                <AppliedBadge applied={j.applied} autoApplied={j.auto_applied} />
               </div>
               <div className="mb-3 flex flex-wrap gap-x-3 text-xs text-slate-500">
                 {j.company && <span>{j.company}</span>}
@@ -197,7 +208,10 @@ function Jobs() {
                     <Link to="/portal/scores" className="btn-soft px-3 py-1.5 text-sm">View explanation</Link>
                   </>
                 ) : (
-                  <button className="btn-primary ml-auto" onClick={() => setApplying(j)}>Apply</button>
+                  <>
+                    {j.score != null && <span className="text-sm text-slate-600">Your score: <b className={BAND[bandOf(j.score)].text}>{Math.round(j.score)}%</b></span>}
+                    <button className="btn-primary ml-auto" onClick={() => setApplying(j)}>Apply</button>
+                  </>
                 )}
               </div>
             </div>
@@ -210,29 +224,123 @@ function Jobs() {
 }
 
 // ------------------------------------------------------------------ resume
+function AutoApplyCard({ me, onChange }) {
+  const [asking, setAsking] = useState(false)
+  const [consent, setConsent] = useState({ details_reviewed: false, data_sharing_consent: false })
+  const [busy, setBusy] = useState(false)
+  const toast = useToast()
+  const on = !!me?.auto_apply_all
+
+  const save = async (enabled) => {
+    setBusy(true)
+    try {
+      const r = await portal.setAutoApply({ enabled, ...consent })
+      const auto = r.auto_applied_jobs || []
+      toast(!enabled ? 'Auto Apply turned off. Applications already submitted stay submitted.'
+        : auto.length ? `Auto Apply on. Applied to ${auto.length} job${auto.length > 1 ? 's' : ''}: ${auto.join(', ')}.`
+          : 'Auto Apply on. No open job scores 80% or more yet; matching jobs will be applied to automatically.')
+      setAsking(false)
+      setConsent({ details_reviewed: false, data_sharing_consent: false })
+      onChange(r)
+    } catch (e) {
+      toast(e.message, 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="card p-5">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="flex items-center gap-2 font-bold text-slate-900"><Zap size={18} className="text-brand-600" />Auto Apply</h2>
+          <p className="mt-1 text-sm text-slate-500">Apply automatically to every open job where your resume scores <b>80% or more</b>, including jobs posted later.</p>
+        </div>
+        <Toggle checked={on || asking} disabled={busy || !me?.has_resume}
+          onChange={(v) => (v ? setAsking(true) : on ? save(false) : setAsking(false))} label={on ? 'On' : 'Off'} />
+      </div>
+      {!me?.has_resume && <p className="mt-3 text-xs text-slate-400">Upload your resume first.</p>}
+      {on && <p className="mt-3 rounded-lg bg-brand-50/70 p-3 text-sm text-slate-700">Auto Apply is on. Turning it off stops new automatic applications; ones already submitted stay submitted.</p>}
+      {asking && !on && (
+        <div className="mt-4 space-y-3 rounded-xl border border-slate-100 p-4">
+          <label className="flex cursor-pointer items-start gap-3 text-sm">
+            <input type="checkbox" className="mt-0.5 h-4 w-4 accent-brand-600" checked={consent.details_reviewed} onChange={(e) => setConsent({ ...consent, details_reviewed: e.target.checked })} />
+            <span>I have reviewed my resume and details. <span className="text-red-500">*</span></span>
+          </label>
+          <label className="flex cursor-pointer items-start gap-3 text-sm">
+            <input type="checkbox" className="mt-0.5 h-4 w-4 accent-brand-600" checked={consent.data_sharing_consent} onChange={(e) => setConsent({ ...consent, data_sharing_consent: e.target.checked })} />
+            <span>I consent to sharing my resume and personal data with the companies of the jobs I am auto-applied to. <span className="text-red-500">*</span></span>
+          </label>
+          <div className="flex justify-end gap-2">
+            <button className="btn-ghost" onClick={() => setAsking(false)}>Cancel</button>
+            <button className="btn-primary" disabled={busy || !consent.details_reviewed || !consent.data_sharing_consent} onClick={() => save(true)}>
+              {busy && <Spinner size={16} />}Turn on Auto Apply
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function OpenJobScores({ refreshKey }) {
+  const { data } = useAsync(() => portal.results(), [refreshKey])
+  if (!data?.length) return null
+  return (
+    <div className="card p-5">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h2 className="font-bold text-slate-900">Your score for each open job</h2>
+        <Link to="/portal/scores" className="text-sm font-semibold text-brand-700 hover:underline">See explanations</Link>
+      </div>
+      <ul className="divide-y divide-slate-100">
+        {data.map((r) => (
+          <li key={r.job_id} className="flex items-center justify-between gap-3 py-2.5">
+            <span className="min-w-0">
+              <span className="block truncate text-sm font-semibold text-slate-800">{r.job_title}</span>
+              {r.company && <span className="block text-xs text-slate-500">{r.company}</span>}
+            </span>
+            <span className="flex shrink-0 items-center gap-3">
+              <AppliedBadge applied={r.applied} autoApplied={r.auto_applied} />
+              <b className={`w-12 text-right ${BAND[bandOf(r.score)].text}`}>{Math.round(r.score)}%</b>
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
 function Resume() {
   const { data: me, loading, error, reload, setData } = useAsync(() => portal.me(), [])
+  const [version, setVersion] = useState(0)
+  const update = (p) => { setData((m) => ({ ...m, ...p })); setVersion((v) => v + 1) }
   return (
     <>
-      <PortalHeader title="My resume" subtitle="Upload a PDF. Uploading a new one replaces the old one and updates your scores." />
+      <PortalHeader title="My resume" subtitle="Upload a PDF. It is scored for every open job; uploading a new one replaces the old one and updates your scores." />
       <ErrorBox error={error} onRetry={reload} />
       {loading && !me ? <Loading /> : (
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-          <div className="card p-5">
-            <h2 className="mb-3 font-bold text-slate-900">{me?.has_resume ? 'Replace resume' : 'Upload resume'}</h2>
-            <ResumeDrop onUploaded={(p) => setData((m) => ({ ...m, ...p }))} />
+          <div className="space-y-6">
+            <div className="card p-5">
+              <h2 className="mb-3 font-bold text-slate-900">{me?.has_resume ? 'Replace resume' : 'Upload resume'}</h2>
+              <ResumeDrop onUploaded={update} />
+            </div>
+            <AutoApplyCard me={me} onChange={update} />
           </div>
-          <div className="card p-5">
-            <h2 className="mb-3 font-bold text-slate-900">What we read from your resume</h2>
-            {!me?.has_resume ? <p className="text-sm text-slate-500">Nothing yet. Upload your resume to see it here.</p> : (
-              <div className="space-y-4 text-sm">
-                <div className="flex items-center gap-2 text-slate-700"><FileText size={16} className="text-brand-600" /><b>{me.resume_filename}</b></div>
-                <div><div className="label">Skills ({me.skills.length})</div><div className="flex flex-wrap gap-1.5">{me.skills.map((s) => <Chip key={s} tone="gray">{s}</Chip>)}</div></div>
-                <div><div className="label">Experience</div>{me.experience_years.toFixed(1)} years</div>
-                <div><div className="label">Education</div>{me.education.length ? me.education.map((e) => `${e.degree}${e.field ? ` · ${e.field}` : ''}`).join(', ') : 'No degree detected'}</div>
-                <p className="text-xs text-slate-400">Something missing? Make sure it's written in your resume (e.g. a "Skills" line and dates like "Jan 2022 – Present"), then upload again.</p>
-              </div>
-            )}
+          <div className="space-y-6">
+            <div className="card p-5">
+              <h2 className="mb-3 font-bold text-slate-900">What we read from your resume</h2>
+              {!me?.has_resume ? <p className="text-sm text-slate-500">Nothing yet. Upload your resume to see it here.</p> : (
+                <div className="space-y-4 text-sm">
+                  <div className="flex items-center gap-2 text-slate-700"><FileText size={16} className="text-brand-600" /><b>{me.resume_filename}</b></div>
+                  <div><div className="label">Skills ({me.skills.length})</div><div className="flex flex-wrap gap-1.5">{me.skills.map((s) => <Chip key={s} tone="gray">{s}</Chip>)}</div></div>
+                  <div><div className="label">Experience</div>{me.experience_years.toFixed(1)} years</div>
+                  <div><div className="label">Education</div>{me.education.length ? me.education.map((e) => `${e.degree}${e.field ? ` · ${e.field}` : ''}`).join(', ') : 'No degree detected'}</div>
+                  <p className="text-xs text-slate-400">Something missing? Make sure it's written in your resume (e.g. a "Skills" line and dates like "Jan 2022 – Present"), then upload again.</p>
+                </div>
+              )}
+            </div>
+            {me?.has_resume && <OpenJobScores refreshKey={version} />}
           </div>
         </div>
       )}
@@ -246,10 +354,10 @@ function Scores() {
   const nav = useNavigate()
   return (
     <>
-      <PortalHeader title="My scores" subtitle="Your resume score and AI explanation for each job you applied to." />
+      <PortalHeader title="My scores" subtitle="Your resume score and AI explanation for every open job, and the jobs you applied to." />
       <ErrorBox error={error} onRetry={reload} />
       {loading && !data ? <Loading /> : !data?.length ? (
-        <div className="card"><Empty icon={Trophy} title="No scores yet">Apply to a job to get your resume score and explanation.
+        <div className="card"><Empty icon={Trophy} title="No scores yet">Upload your resume in My Resume to get a score for every open job.
           <div className="mt-3"><button className="btn-primary" onClick={() => nav('/portal')}>Browse jobs</button></div></Empty></div>
       ) : (
         <div className="space-y-5">

@@ -24,6 +24,9 @@ FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 def migrate() -> None:
     """Create new tables and add columns introduced after the first release (SQLite-safe)."""
     Base.metadata.create_all(engine)
+    if "auto_apply_all" not in {c["name"] for c in inspect(engine).get_columns("candidates")}:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE candidates ADD COLUMN auto_apply_all BOOLEAN DEFAULT 0"))
     cols = {c["name"] for c in inspect(engine).get_columns("applications")}
     if "candidate_applied" not in cols:
         with engine.begin() as conn:
@@ -93,6 +96,9 @@ async def lifespan(_: FastAPI):
 
             seed_if_empty(db)
         ensure_accounts(db)
+        from .services.matcher import load_settings
+
+        load_settings(db)  # HR Auto Shortlist on/off
         refresh_stale_scores(db)
     yield
 

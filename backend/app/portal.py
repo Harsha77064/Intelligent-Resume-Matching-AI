@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import hashlib
 import uuid
-from datetime import datetime
 
 from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
 from pydantic import BaseModel
@@ -16,8 +15,8 @@ from sqlalchemy.orm import Session
 
 from .auth import COOKIES, require_candidate, verify_password
 from .database import UPLOAD_DIR, get_db
-from .models import Application, Candidate, Job, User
-from .services.matcher import route, run_matching
+from .models import Application, Candidate, Job, User, utcnow
+from .services.matcher import auto_apply_if_high, is_auto_applied as _auto_applied, route, run_matching
 from .services.parser import ResumeParseError, parse_resume
 
 router = APIRouter(prefix="/api/portal")
@@ -30,9 +29,10 @@ def _my_candidate(db: Session, user: User) -> Candidate | None:
 
 def _profile(c: Candidate | None) -> dict:
     if not c or not c.resume_text:
-        return {"has_resume": False}
+        return {"has_resume": False, "auto_apply_all": bool(c and c.auto_apply_all)}
     return {
         "has_resume": True,
+        "auto_apply_all": c.auto_apply_all,
         "resume_filename": c.resume_filename,
         "uploaded_at": c.updated_at,
         "skills": c.skills or [],
@@ -52,6 +52,21 @@ def _for_candidate(text: str) -> str:
     )
 
 
+def _score_open_jobs(db: Session, cand: Candidate) -> list[Application]:
+    """Score the resume against every open job (and re-score any job it was already scored for).
+
+    With Auto Apply on (set from "My Resume" with consent), every open job scoring 80% or more
+    is applied to automatically. Returns the applications that were newly auto-applied.
+    """
+    job_ids = {a.job_id for a in cand.applications}
+    jobs = db.query(Job).filter((Job.status == "active") | (Job.id.in_(job_ids))).all()
+    for job in jobs:
+        run_matching(db, job, [cand])
+    newly = [a for a in list(cand.applications) if auto_apply_if_high(a)]
+    db.commit()
+    return newly
+
+
 def _result(a: Application) -> dict:
     return {
         "job_id": a.job_id,
@@ -65,6 +80,8 @@ def _result(a: Application) -> dict:
         "matched_preferred": a.matched_preferred or [],
         "breakdown": a.breakdown or {},
         "applied_at": a.matched_at,
+        "applied": a.candidate_applied,
+        "auto_applied": _auto_applied(a),
     }
 
 
@@ -76,7 +93,7 @@ def me(user: User = Depends(require_candidate), db: Session = Depends(get_db)):
 @router.get("/jobs")
 def jobs(user: User = Depends(require_candidate), db: Session = Depends(get_db)):
     cand = _my_candidate(db, user)
-    applied = {a.job_id: a.score for a in cand.applications if a.candidate_applied} if cand else {}
+    mine = {a.job_id: a for a in cand.applications} if cand else {}
     rows = db.query(Job).filter(Job.status == "active").order_by(Job.created_at.desc()).all()
     return [
         {
@@ -84,7 +101,9 @@ def jobs(user: User = Depends(require_candidate), db: Session = Depends(get_db))
             "location": j.location, "employment_type": j.employment_type, "description": j.description,
             "required_skills": j.required_skills, "preferred_skills": j.preferred_skills,
             "min_experience": j.min_experience, "education_level": j.education_level,
-            "applied": j.id in applied, "score": applied.get(j.id),
+            "applied": bool(j.id in mine and mine[j.id].candidate_applied),
+            "auto_applied": bool(j.id in mine and _auto_applied(mine[j.id])),
+            "score": mine[j.id].score if j.id in mine else None,
         }
         for j in rows
     ]
@@ -94,7 +113,7 @@ def jobs(user: User = Depends(require_candidate), db: Session = Depends(get_db))
 async def upload_resume(
     file: UploadFile = File(...), user: User = Depends(require_candidate), db: Session = Depends(get_db)
 ):
-    """Upload or replace the candidate's own resume. Existing applications are re-scored."""
+    """Upload or replace the candidate's own resume and score it against every open job."""
     fname = file.filename or "resume.pdf"
     if not fname.lower().endswith(".pdf"):
         raise HTTPException(400, "Please upload a PDF file.")
@@ -133,14 +152,42 @@ async def upload_resume(
     cand.experience_years = parsed.experience_years
     cand.parse_ms = parsed.parse_ms
     cand.corrected = False
-    cand.updated_at = datetime.now().astimezone()
+    cand.updated_at = utcnow()  # UTC like every other timestamp (SQLite drops the offset)
     db.commit()
     if user.candidate_id != cand.id:
         user.candidate_id = cand.id
         db.commit()
-    for app in list(cand.applications):
-        run_matching(db, app.job, [cand])
-    return _profile(cand)
+    newly = _score_open_jobs(db, cand)
+    return {**_profile(cand), "auto_applied_jobs": [a.job.title for a in newly]}
+
+
+class AutoApplyIn(BaseModel):
+    enabled: bool
+    details_reviewed: bool = False
+    data_sharing_consent: bool = False
+
+
+@router.post("/auto-apply")
+def set_auto_apply(body: AutoApplyIn, user: User = Depends(require_candidate), db: Session = Depends(get_db)):
+    """Turn Auto Apply on or off for all open jobs. Turning it on applies to every job scoring 80%+.
+
+    Turning it off stops new automatic applications; ones already submitted stay submitted.
+    """
+    cand = _my_candidate(db, user)
+    if body.enabled:
+        if not cand or not cand.resume_text:
+            raise HTTPException(400, "Upload your resume before turning on Auto Apply.")
+        if not (body.details_reviewed and body.data_sharing_consent):
+            raise HTTPException(400, "Please confirm you reviewed your details and consent to share your resume.")
+        cand.details_reviewed = True
+        cand.data_sharing_consent = True
+    if cand is None:
+        return {**_profile(None), "auto_applied_jobs": []}
+    cand.auto_apply_all = body.enabled
+    cand.auto_apply = body.enabled
+    db.commit()
+    newly = _score_open_jobs(db, cand) if body.enabled else []
+    return {**_profile(cand), "auto_applied_jobs": [a.job.title for a in newly]}
 
 
 class ApplyIn(BaseModel):
@@ -162,13 +209,13 @@ def apply(job_id: int, body: ApplyIn, user: User = Depends(require_candidate), d
     # profile keeps the candidate's latest choices (shown to HR); the application holds the consent for THIS job
     cand.details_reviewed = True
     cand.data_sharing_consent = True
-    cand.auto_apply = body.auto_apply
+    cand.auto_apply = body.auto_apply or cand.auto_apply_all
     db.commit()
     app = run_matching(db, job, [cand])[0]
     app.candidate_applied = True
     app.details_reviewed = True
     app.data_sharing_consent = True
-    app.auto_apply = body.auto_apply
+    app.auto_apply = body.auto_apply or cand.auto_apply_all
     route(app)
     db.commit()
     return _result(app)
@@ -179,8 +226,9 @@ def results(user: User = Depends(require_candidate), db: Session = Depends(get_d
     cand = _my_candidate(db, user)
     if not cand:
         return []
-    mine = [a for a in cand.applications if a.candidate_applied]
-    return [_result(a) for a in sorted(mine, key=lambda a: a.matched_at, reverse=True)]
+    # every open job the resume was scored for, plus any job applied to (even if since closed)
+    mine = [a for a in cand.applications if a.candidate_applied or a.job.status == "active"]
+    return [_result(a) for a in sorted(mine, key=lambda a: (not a.candidate_applied, -a.score))]
 
 
 class DeleteAccountIn(BaseModel):
