@@ -12,7 +12,7 @@ A web-based Applicant Tracking System (ATS) that parses PDF resumes, compares th
 ```powershell
 .\run.ps1
 ```
-Open http://localhost:8000. The script creates the venv, installs packages, builds the React app and serves everything from FastAPI.
+Open http://localhost:8001. The script creates the venv, installs packages, builds the React app and serves everything from FastAPI.
 
 ### Option B: development (hot reload)
 Terminal 1, backend:
