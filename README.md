@@ -20,7 +20,7 @@ Terminal 1, backend:
 cd backend
 python -m venv .venv
 .\.venv\Scripts\python -m pip install -r requirements-dev.txt -r requirements-embeddings.txt
-.\.venv\Scripts\python -m uvicorn app.main:app --reload --port 8000
+.\.venv\Scripts\python -m uvicorn app.main:app --reload --port 8001
 ```
 Terminal 2, frontend:
 ```powershell
@@ -28,7 +28,7 @@ cd frontend
 npm install
 npm run dev
 ```
-Open http://localhost:5173 (Vite proxies `/api` to port 8000). API docs: http://localhost:8000/docs
+Open http://localhost:5173 (Vite proxies `/api` to port 8001). API docs: http://localhost:8001/docs
 
 On first start the backend downloads the embedding model (~90 MB, once) and seeds **3 sample jobs + 12 demo candidates** (fictional, stored in `backend/data/demo_resumes/`). Set `SEED_DEMO=0` to start empty.
 
